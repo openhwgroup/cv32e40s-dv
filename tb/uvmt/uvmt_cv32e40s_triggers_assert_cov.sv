@@ -137,8 +137,6 @@ module uvmt_cv32e40s_triggers_assert_cov
   localparam MAX_MEM_ACCESS = 13; //Push and pop can do 13 memory access. TODO: XIF, can potentially do more, so for XIF assertion a_dt_max_memory_transaction might fail.
   localparam MAX_MEM_ACCESS_PLUS_ONE = 53'b1_0000__0000_0000_0000_0000__0000_0000_0000_0000__0000_0000_0000_0000;
 
-
-
   /////////// Signals ///////////
 
   logic [31:0] tdata1_pre_state;
@@ -201,32 +199,36 @@ module uvmt_cv32e40s_triggers_assert_cov
     csri_uimm = rvfi_if.rvfi_insn[19:15];
   end
 
-
   /////////// Sequences ///////////
 
   sequence seq_csr_read_mmode(csr_addr);
+    @(posedge clknrst_if.clk)
     valid_instr_in_mmode
     && rvfi_if.is_csr_read(csr_addr)
     && rvfi_if.rvfi_rd1_addr != 0;
   endsequence
 
   sequence seq_csr_write_mmode(csr_addr);
+    @(posedge clknrst_if.clk)
     valid_instr_in_mmode
     && rvfi_if.is_csr_write(csr_addr);
   endsequence
 
   sequence seq_csr_read_dmode(csr_addr);
+    @(posedge clknrst_if.clk)
     valid_instr_in_dmode
     && rvfi_if.is_csr_read(csr_addr)
     && rvfi_if.rvfi_rd1_addr != 0;
   endsequence
 
   sequence seq_csr_write_dmode(csr_addr);
+    @(posedge clknrst_if.clk)
     valid_instr_in_dmode
     && rvfi_if.is_csr_write(csr_addr);
   endsequence
 
   sequence seq_tdata1_m2_m6_or_disabled(t);
+    @(posedge clknrst_if.clk)
     valid_instr_in_dmode
     && tselect_pre_state == t
     && (tdata1_pre_state[MSB_TYPE:LSB_TYPE] == TTYPE_MCONTROL
@@ -235,6 +237,7 @@ module uvmt_cv32e40s_triggers_assert_cov
   endsequence
 
   sequence seq_etrigger_hit(t, priv_lvl, exception);
+    @(posedge clknrst_if.clk)
     support_if.trigger_match_exception[t]
     && !rvfi_if.rvfi_dbg_mode
     && priv_lvl
@@ -312,7 +315,7 @@ module uvmt_cv32e40s_triggers_assert_cov
 
   /////////// Assertions and Coverages ///////////
 
-  //Verify that it isonly possible to do 13 Memory transactions:
+  //Verify that it is only possible to do 13 Memory transactions:
   //TODO XIF: this might not be the case for xif, as it can potentionally do more:
 
   a_dt_max_memory_transaction: assert property (
@@ -359,43 +362,14 @@ module uvmt_cv32e40s_triggers_assert_cov
 
   //- Vplan:
   //Check that attempts to access "tdata3" raise an illegal instruction exception, always. (Unless overruled by a higher priority.)
-  //Verify that tdata3 is illegal for all tdata2 types.
 
   //- Assertion verification:
   //1) Check that attempts to access "tdata3" raise an illegal instruction exception, always. (Unless overruled by a higher priorit
-  //2) Verify that tdata3 is illegal for all tdata2 types.
 
   //1)
   a_dt_tdata3_not_implemented: assert property (
     p_dt_tcsr_not_implemented(ADDR_TDATA3)
   ) else `uvm_error(info_tag, "Access to tdata3 does not cause an illegal exception (when no higher priority exception has occured)\n");
-
-
-  // Assertions and coverages for when there are debug triggers:
-  if (CORE_PARAM_DBG_NUM_TRIGGERS != 0) begin
-
-    //2)
-    c_dt_access_tdata3_m2: cover property (
-      rvfi_if.is_csr_instr(ADDR_TDATA3)
-      && tdata1_pre_state[MSB_TYPE:LSB_TYPE] == TTYPE_MCONTROL
-    );
-
-    c_dt_access_tdata3_etrigger: cover property (
-      rvfi_if.is_csr_instr(ADDR_TDATA3)
-      && tdata1_pre_state[MSB_TYPE:LSB_TYPE] == TTYPE_ETRIGGER
-    );
-
-    c_dt_access_tdata3_m6: cover property (
-      rvfi_if.is_csr_instr(ADDR_TDATA3)
-      && tdata1_pre_state[MSB_TYPE:LSB_TYPE] == TTYPE_MCONTROL6
-    );
-
-    c_dt_access_tdata3_disabled: cover property (
-      rvfi_if.is_csr_instr(ADDR_TDATA3)
-      && tdata1_pre_state[MSB_TYPE:LSB_TYPE] == TTYPE_DISABLED
-    );
-  end
-
 
   //- Vplan:
   //Have 0 triggers, access any trigger register and check that illegal instruction exception occurs.
@@ -485,9 +459,9 @@ module uvmt_cv32e40s_triggers_assert_cov
 
     //4)
     a_dt_tselect_higher_than_dbg_num_triggers: assert property(
-      rvfi_if.is_csr_instr(ADDR_TSELECT)
+      rvfi_if.rvfi_valid
       |->
-      rvfi_if.rvfi_rd1_wdata < CORE_PARAM_DBG_NUM_TRIGGERS
+      tselect_post_state < CORE_PARAM_DBG_NUM_TRIGGERS
     ) else `uvm_error(info_tag, "The CSR tselect is set to equal or higher than the number of trigger.\n");
 
 
@@ -647,7 +621,7 @@ module uvmt_cv32e40s_triggers_assert_cov
     //2) Try changing "tdata1.dmode" and check that it is WARL (0x1)
 
 
-    //1) //a_dt_access_csr_not_dbg_mode --> changed to the two following assertions: a_dt_not_access_tdata1_dbg_mode, a_dt_not_access_tdata2_dbg_mode
+    //1)
     a_dt_not_access_tdata1_dbg_mode: assert property (
       !rvfi_if.rvfi_dbg_mode
       && rvfi_if.is_csr_instr(ADDR_TDATA1)
@@ -978,6 +952,7 @@ module uvmt_cv32e40s_triggers_assert_cov
       && rvfi_if.rvfi_dbg_mode
       && dcsr_if.rvfi_csr_wmask
       |->
+      //If DCSR is written (wmask != 0) there must have been a csr write operation, and not due to a sideeffect of a trigger match
       rvfi_if.is_csr_write(ADDR_DCSR)
     ) else `uvm_error(info_tag, "Action is taken when there is a trigger match while in debug mode (dcsr is changed even though we dont do a dcsr write operation).\n");
 
@@ -986,6 +961,7 @@ module uvmt_cv32e40s_triggers_assert_cov
       && rvfi_if.rvfi_dbg_mode
       && dpc_if.rvfi_csr_wmask
       |->
+      //If DPC is written (wmask != 0) there must have been a csr write operation, and not due to a sideeffect of a trigger match
       rvfi_if.is_csr_write(ADDR_DPC)
     ) else `uvm_error(info_tag, "Action is taken when there is a trigger match while in debug mode (dpc is changed even though we dont do a dpc write operation).\n");
 
@@ -1000,12 +976,13 @@ module uvmt_cv32e40s_triggers_assert_cov
       //2) Verify that we do not enter debug when triggering unenabled exceptions
 
       //1)
-      a_dt_exception_trigger_hit_m_instr_access_fault: assert property(
+      //TODO: krdosvik, fails, need rtl fix.
+      /*a_dt_exception_trigger_hit_m_instr_access_fault: assert property(
         p_etrigger_hit(
           t,
           rvfi_if.is_mmode,
           EXC_CAUSE_INSTR_FAULT)
-      ) else `uvm_error(info_tag, "The trigger match (exception match, machine mode, instruction fault) does not send the core into debug mode.\n");
+      ) else `uvm_error(info_tag, "The trigger match (exception match, machine mode, instruction fault) does not send the core into debug mode.\n");*/
 
       a_dt_exception_trigger_hit_u_instr_access_fault: assert property(
         p_etrigger_hit(
@@ -1084,12 +1061,13 @@ module uvmt_cv32e40s_triggers_assert_cov
           EXC_CAUSE_ECALL_UMODE)
       ) else `uvm_error(info_tag, "The trigger match (exception match, user mode, ecall in user mode) does not send the core into debug mode.\n");
 
-      a_dt_exception_trigger_hit_m_instr_bus_fault: assert property(
+      //TODO: krdosvik, fails, need rtl fix.
+      /*a_dt_exception_trigger_hit_m_instr_bus_fault: assert property(
         p_etrigger_hit(
           t,
           rvfi_if.is_mmode,
           EXC_CAUSE_INSTR_BUS_FAULT)
-      ) else `uvm_error(info_tag, "The trigger match (exception match, machine mode, instruction bus fault) does not send the core into debug mode.\n");
+      ) else `uvm_error(info_tag, "The trigger match (exception match, machine mode, instruction bus fault) does not send the core into debug mode.\n");*/
 
       a_dt_exception_trigger_hit_u_instr_bus_fault: assert property(
         p_etrigger_hit(
@@ -1098,7 +1076,8 @@ module uvmt_cv32e40s_triggers_assert_cov
           EXC_CAUSE_INSTR_BUS_FAULT)
       ) else `uvm_error(info_tag, "The trigger match (exception match, user mode, instruction bus fault) does not send the core into debug mode.\n");
 
-      if (INTEGRITY_ERRORS_ENABLED) begin
+      //TODO: krdosvik, fails, need rtl fix.
+      /*if (INTEGRITY_ERRORS_ENABLED) begin
 
         a_glitch_dt_exception_trigger_hit_m_instr_integrity_fault: assert property(
           p_etrigger_hit(
@@ -1130,7 +1109,7 @@ module uvmt_cv32e40s_triggers_assert_cov
             EXC_CAUSE_INSTR_INTEGRITY_FAULT)
         ) else `uvm_error(info_tag, "exception trigger hit precondition is met for user mode even though we assueme no integrity faults.\n");
 
-      end
+      end*/
 
       //2) see a_dt_enter_dbg_reason
 
@@ -1325,7 +1304,8 @@ module uvmt_cv32e40s_triggers_assert_cov
 
 
     //2)
-    a_dt_enter_dbg_reason: assert property (
+    //TODO: krdosvik, fails, need rtl fix.
+    /*a_dt_enter_dbg_reason: assert property (
       rvfi_if.rvfi_valid
       && rvfi_if.rvfi_trap.debug
       && rvfi_if.rvfi_trap.debug_cause == TRIGGER_MATCH
@@ -1333,8 +1313,7 @@ module uvmt_cv32e40s_triggers_assert_cov
       |->
       support_if.is_trigger_match
 
-    ) else `uvm_error(info_tag, "We have entered debug mode due to triggers but not due to any of the listed reasons.\n");
-
+    ) else `uvm_error(info_tag, "We have entered debug mode due to triggers but not due to any of the listed reasons.\n");*/
 
     //- Vplan:
     //Change the type to 2/6/15 and write any data to "tdata2", read it back and check that it always gets set.

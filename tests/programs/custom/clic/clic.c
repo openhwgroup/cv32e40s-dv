@@ -35,7 +35,7 @@
 
 // MUST be 31 or less (bit position-1 in result array determines test pass/fail
 // status, thus we are limited to 31 tests with this construct.
-#define NUM_TESTS 23
+#define NUM_TESTS 25
 // Set which test index to start testing at (for quickly running specific tests during development)
 #define START_TEST_IDX 0
 // Abort test at first self-check fail, useful for debugging.
@@ -148,27 +148,27 @@ typedef union {
 
 typedef union {
   struct {
-    volatile uint8_t uie   : 1;  //     0
-    volatile uint8_t sie   : 1;  //     1
-    volatile uint8_t wpri  : 1;  //     2
-    volatile uint8_t mie   : 1;  //     3
-    volatile uint8_t upie  : 1;  //     4
-    volatile uint8_t spie  : 1;  //     5
-    volatile uint8_t wpri0 : 1;  //     6
-    volatile uint8_t mpie  : 1;  //     7
-    volatile uint8_t spp   : 1;  //     8
-    volatile uint8_t wpri1 : 2;  // 10: 9
-    volatile uint8_t mpp   : 2;  // 12:11
-    volatile uint8_t fs    : 2;  // 14:13
-    volatile uint8_t xs    : 2;  // 16:15
-    volatile uint8_t mprv  : 1;  //    17
-    volatile uint8_t sum   : 1;  //    18
-    volatile uint8_t mxr   : 1;  //    19
-    volatile uint8_t tvm   : 1;  //    20
-    volatile uint8_t tw    : 1;  //    21
-    volatile uint8_t tsr   : 1;  //    22
-    volatile uint8_t wpri3 : 8;  // 30:23
-    volatile uint8_t sd    : 1;  //    31
+    volatile uint32_t uie   : 1;  //     0
+    volatile uint32_t sie   : 1;  //     1
+    volatile uint32_t wpri  : 1;  //     2
+    volatile uint32_t mie   : 1;  //     3
+    volatile uint32_t upie  : 1;  //     4
+    volatile uint32_t spie  : 1;  //     5
+    volatile uint32_t wpri0 : 1;  //     6
+    volatile uint32_t mpie  : 1;  //     7
+    volatile uint32_t spp   : 1;  //     8
+    volatile uint32_t wpri1 : 2;  // 10: 9
+    volatile uint32_t mpp   : 2;  // 12:11
+    volatile uint32_t fs    : 2;  // 14:13
+    volatile uint32_t xs    : 2;  // 16:15
+    volatile uint32_t mprv  : 1;  //    17
+    volatile uint32_t sum   : 1;  //    18
+    volatile uint32_t mxr   : 1;  //    19
+    volatile uint32_t tvm   : 1;  //    20
+    volatile uint32_t tw    : 1;  //    21
+    volatile uint32_t tsr   : 1;  //    22
+    volatile uint32_t wpri3 : 8;  // 30:23
+    volatile uint32_t sd    : 1;  //    31
   } volatile fields;
   volatile uint32_t raw;
 } __attribute__((packed)) mstatus_t;
@@ -205,7 +205,11 @@ const uint32_t MCAUSE_MPIE_MASK  = 0x1 << MCAUSE_MPIE_OFFSET;
 volatile verbosity_t global_verbosity = V_LOW;
 
 extern volatile uint32_t mtvt_table;
+extern volatile uint32_t mtvt_table_mret;
+extern volatile uint32_t mtvt_table_mret_dest;
 extern volatile uint32_t recovery_pt;
+extern volatile uint32_t recovery_pt_mret;
+extern volatile uint32_t recovery_pt_mret_ptr;
 
 volatile uint32_t test_fail_asm;
 
@@ -216,6 +220,8 @@ volatile uint32_t * volatile g_asserted_irq_lvl;
 volatile uint32_t * volatile g_irq_handler_reported_error;
 volatile uint32_t * volatile g_mepc_triggered;
 volatile uint32_t * volatile g_recovery_enable;
+volatile uint32_t * volatile g_checker;
+
 // ---------------------------------------------------------------
 // Test prototypes - should match
 // uint32_t <name>(uint32_t index, uint8_t report_name)
@@ -232,6 +238,7 @@ uint32_t w_mip_notrap_r_zero(uint32_t index, uint8_t report_name);
 uint32_t w_mtvt_rd_alignment(uint32_t index, uint8_t report_name);
 uint32_t w_mtvec_rd_alignment(uint32_t index, uint8_t report_name);
 uint32_t invalid_mtvt_ptr_exec(uint32_t index, uint8_t report_name);
+uint32_t invalid_mtvt_ptr_exec_mret(uint32_t index, uint8_t report_name);
 uint32_t r_mnxti_without_irq(uint32_t index, uint8_t report_name);
 uint32_t rw_mnxti_without_irq_illegal(uint32_t index, uint8_t report_name);
 uint32_t r_mnxti_with_pending_irq(uint32_t index, uint8_t report_name);
@@ -245,6 +252,7 @@ uint32_t mret_with_minhv(uint32_t index, uint8_t report_name);
 uint32_t mintthresh_higher(uint32_t index, uint8_t report_name);
 uint32_t mintthresh_lower(uint32_t index, uint8_t report_name);
 uint32_t mintthresh_equal(uint32_t index, uint8_t report_name);
+uint32_t mret_with_minhv_and_unaligned_mepc(uint32_t index, uint8_t report_name);
 
 // ---------------------------------------------------------------
 // Generic test template:
@@ -372,6 +380,7 @@ int main(int argc, char **argv){
   g_irq_handler_reported_error = calloc(1, sizeof(uint32_t));
   g_mepc_triggered             = calloc(1, sizeof(uint32_t));
   g_recovery_enable            = calloc(1, sizeof(uint32_t));
+  g_checker                    = calloc(1, sizeof(uint32_t));
 
   // Add function pointers to new tests here
   tests[0]  = mcause_mstatus_mirror_init;
@@ -384,19 +393,21 @@ int main(int argc, char **argv){
   tests[7]  = w_mtvt_rd_alignment;
   tests[8]  = w_mtvec_rd_alignment;
   tests[9]  = invalid_mtvt_ptr_exec;
-  tests[10] = r_mnxti_without_irq;
-  tests[11] = rw_mnxti_without_irq_illegal;
-  tests[12] = r_mnxti_with_pending_irq;
-  tests[13] = r_mnxti_with_lower_lvl_pending_irq;
-  tests[14] = w_mnxti_side_effects;
-  tests[15] = rw_mscratchcsw;
-  tests[16] = rw_mscratchcsw_illegal;
-  tests[17] = rw_mscratchcswl;
-  tests[18] = rw_mscratchcswl_illegal;
-  tests[19] = mret_with_minhv;
-  tests[20] = mintthresh_lower;
-  tests[21] = mintthresh_higher;
-  tests[22] = mintthresh_equal;
+  tests[10] = invalid_mtvt_ptr_exec_mret;
+  tests[11] = r_mnxti_without_irq;
+  tests[12] = rw_mnxti_without_irq_illegal;
+  tests[13] = r_mnxti_with_pending_irq;
+  tests[14] = r_mnxti_with_lower_lvl_pending_irq;
+  tests[15] = w_mnxti_side_effects;
+  tests[16] = rw_mscratchcsw;
+  tests[17] = rw_mscratchcsw_illegal;
+  tests[18] = rw_mscratchcswl;
+  tests[19] = rw_mscratchcswl_illegal;
+  tests[20] = mret_with_minhv;
+  tests[21] = mintthresh_lower;
+  tests[22] = mintthresh_higher;
+  tests[23] = mintthresh_equal;
+  tests[24] = mret_with_minhv_and_unaligned_mepc;
 
   // Run all tests in list above
   cvprintf(V_LOW, "\nCLIC Test start\n\n");
@@ -414,6 +425,7 @@ int main(int argc, char **argv){
   free((void *)g_irq_handler_reported_error);
   free((void *)g_mepc_triggered            );
   free((void *)g_recovery_enable           );
+  free((void *)g_checker                   );
   return retval; // Nonzero for failing tests
 }
 
@@ -1314,6 +1326,33 @@ __attribute__((naked)) void mtvt_code(void) {
 
 // -----------------------------------------------------------------------------
 
+__attribute__((naked)) void mtvt_code_destination_blocked(void) {
+    __asm__ volatile ( R"(
+      .global mtvt_table_mret
+      .global mtvt_table_mret_dest
+      .align 7
+      mtvt_table_mret:   .long . + 4096
+      mtvt_table_mret_1: .long . + 4092
+      mtvt_table_mret_2: .long . + 4088
+      mtvt_table_mret_3: .long . + 4084
+      mtvt_table_mret_4: .long . + 4080
+      .space 100, 0x0
+      mtvt_table_mret_30: .long . + 3976
+      mtvt_table_mret_31: .long . + 3972
+      mtvt_table_mret_32: .long . + 3968
+      .space 3952, 0x0
+      mtvt_table_mret_1021: .long . + 12
+      mtvt_table_mret_1022: .long . + 8
+      mtvt_table_mret_1023: .long . + 4
+
+      mtvt_table_mret_dest: jal zero, m_fast14_irq_handler
+    )"
+    );
+}
+
+// -----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+
 __attribute__((naked)) void m_fast14_irq_handler(void) {
   __asm__ volatile ( R"(
     # Push saved regs and allocate space for the remaining 16 regs
@@ -1357,17 +1396,45 @@ __attribute__((naked)) void m_fast14_irq_handler(void) {
     # Check if we should skip jump to recovery code
     lw s0, g_recovery_enable
     lw s1, 0(s0)
-    beq s1, zero, 1f
-    add s1, zero, zero
+    beq s1, zero, 5f
+
+    addi s2, zero, 1
+    beq s1, s2, 1f
+
+    addi s2, zero, 2
+    beq s1, s2, 2f
+
+    addi s2, zero, 3
+    beq s1, s2, 3f
+
+    # First test with recovery_pt
+    1: add s1, zero, zero
     sw s1, 0(s0)
-    # Else, Get recovery mepc and replace mepc
+    # Get recovery mepc and replace mepc
     la s1, recovery_pt
     csrrw zero, mepc, s1
+    jal zero, 4f
+
+    # Second test with recovery_pt_mret
+    2: add s1, zero, zero
+    sw s1, 0(s0)
+    # Get recovery mepc and replace mepc
+    la s1, recovery_pt_mret
+    csrrw zero, mepc, s1
+    jal zero, 4f
+
+    # Third test with recovery_pt_mret_ptr
+    3: add s1, zero, zero
+    sw s1, 0(s0)
+    # Get recovery mepc and replace mepc
+    la s1, recovery_pt_mret_ptr
+    csrrw zero, mepc, s1
+
     # clear mcause, set mpp
-    lui s1, 0x30000
+    4: lui s1, 0x30000
     csrrw zero, mcause, s1
 
-    1:
+    5:
     ## restore stack
     lw gp, 64(sp)
 
@@ -1555,8 +1622,13 @@ uint32_t invalid_mtvt_ptr_exec(uint32_t index, uint8_t report_name) {
     recovery_pt: add x0, x0, x0
   )":::);
 
-  cvprintf(V_LOW, "Entered recovery point, due to unrecoverable clic ptr trap, mepc: %08x, expected: %08x\n", *g_mepc_triggered, (uint32_t)(*((&mtvt_table) + 4)));
-  test_fail += test_fail_asm || *g_mepc_triggered != (uint32_t)(*(&mtvt_table + 4));
+  __asm__ volatile ( R"(
+    lui t0, 0x40000
+    csrrc zero, mcause, t0
+  )" ::: "t0");
+
+  cvprintf(V_LOW, "Entered recovery point, due to unrecoverable clic ptr trap, mepc: %08x, expected: %08x\n", *g_mepc_triggered, (uint32_t)(&mtvt_table + 4));
+  test_fail += test_fail_asm || *g_mepc_triggered != (uint32_t)(&mtvt_table + 4);
 
 
   if (test_fail) {
@@ -1566,6 +1638,199 @@ uint32_t invalid_mtvt_ptr_exec(uint32_t index, uint8_t report_name) {
   cvprintf(V_MEDIUM, "\nTest: \"%s\" OK!\n", name);
   return 0;
 }
+
+// -----------------------------------------------------------------------------
+
+uint32_t invalid_mtvt_ptr_exec_mret(uint32_t index, uint8_t report_name) {
+  volatile uint8_t test_fail = 0;
+
+  volatile uint32_t addr = 0x0;
+
+  SET_FUNC_INFO
+  if (report_name) {
+    cvprintf(V_LOW, "\"%s\"", name);
+    return 0;
+  }
+
+  // Set PMP configuration
+  __asm__ volatile ( R"(
+    la %[addr], mtvt_table_mret_dest
+    srli %[addr], %[addr], 2
+    csrrw x0, pmpaddr0, %[addr]
+    la %[addr], mtvt_table_mret_dest + 4
+    srli %[addr], %[addr], 2
+    csrrw x0, pmpaddr1, %[addr]
+    addi %[addr], x0, -1
+    csrrw x0, pmpaddr2, %[addr]
+  )"
+      : [addr] "+r"(addr)
+      :
+      : "t0"
+      );
+
+  set_mseccfg((mseccfg_t){
+      .rlb  = 1,
+      .mmwp = 0,
+      .mml  = 0
+    });
+
+  set_pmpcfg((pmpcfg_t){
+      .reg_no = 0,
+      .lock = 0,
+      .mode = TOR,
+      .execute = 1,
+      .write = 1,
+      .read = 1
+    });
+
+  set_pmpcfg((pmpcfg_t){
+      .reg_no = 1,
+      .lock = 1,
+      .mode = TOR,
+      .execute = 0,
+      .write = 0,
+      .read = 0
+    });
+
+  set_pmpcfg((pmpcfg_t){
+      .reg_no = 2,
+      .lock = 0,
+      .mode = TOR,
+      .execute = 1,
+      .write = 1,
+      .read = 1
+    });
+
+  *g_mepc_triggered = 0;
+  *g_recovery_enable = 2;
+  test_fail_asm = 0;
+
+  __asm__ volatile ( R"(
+    la t0, mtvt_table_mret_4
+    csrrw zero, mepc, t0
+    # set minhv and mpp = M
+    lui t0, 0x70000
+    csrrs zero, mcause, t0
+  )"::: "t0");
+
+  __asm__ volatile ( R"(
+    mret
+  )":::);
+
+  __asm__ volatile ( R"(
+    .extern test_fail_asm
+    # This should never execute (deliberate dead code)
+    la t0, test_fail_asm
+    lw t1, 0(t0)
+    addi t1, t1, 1
+    sw t1, 0(t0)
+    # Execution should continue here
+    .global recovery_pt_mret
+    recovery_pt_mret: add x0, x0, x0
+  )":::);
+
+  __asm__ volatile ( R"(
+    lui t0, 0x40000
+    csrrc zero, mcause, t0
+  )" ::: "t0");
+
+  cvprintf(V_LOW, "Entered recovery point, due to unrecoverable mret ptr dest. trap, mepc: %08x, expected: %08x\n", *g_mepc_triggered, (uint32_t)(&mtvt_table_mret_dest));
+  test_fail += test_fail_asm || *g_mepc_triggered != (uint32_t)(&mtvt_table_mret_dest);
+
+  // Set PMP configuration
+  __asm__ volatile ( R"(
+    la %[addr], mtvt_table_mret_3
+    srli %[addr], %[addr], 2
+    csrrw x0, pmpaddr0, %[addr]
+    la %[addr], mtvt_table_mret_4
+    srli %[addr], %[addr], 2
+    csrrw x0, pmpaddr1, %[addr]
+    addi %[addr], x0, -1
+    csrrw x0, pmpaddr2, %[addr]
+  )"
+      : [addr] "+r"(addr)
+      :
+      : "t0"
+      );
+
+  set_mseccfg((mseccfg_t){
+      .rlb  = 1,
+      .mmwp = 0,
+      .mml  = 0
+    });
+
+  set_pmpcfg((pmpcfg_t){
+      .reg_no = 0,
+      .lock = 0,
+      .mode = TOR,
+      .execute = 1,
+      .write = 1,
+      .read = 1
+    });
+
+  set_pmpcfg((pmpcfg_t){
+      .reg_no = 1,
+      .lock = 1,
+      .mode = TOR,
+      .execute = 0,
+      .write = 0,
+      .read = 0
+    });
+
+  set_pmpcfg((pmpcfg_t){
+      .reg_no = 2,
+      .lock = 0,
+      .mode = TOR,
+      .execute = 1,
+      .write = 1,
+      .read = 1
+    });
+
+  *g_mepc_triggered = 0;
+  *g_recovery_enable = 3;
+  test_fail_asm = 0;
+
+  __asm__ volatile ( R"(
+    la t0, mtvt_table_mret_3
+    csrrw zero, mepc, t0
+    # set minhv and mpp = M
+    lui t0, 0x70000
+    csrrs zero, mcause, t0
+  )"::: "t0");
+
+  __asm__ volatile ( R"(
+    mret
+  )":::);
+
+  __asm__ volatile ( R"(
+    .extern test_fail_asm
+    # This should never execute (deliberate dead code)
+    la t0, test_fail_asm
+    lw t1, 0(t0)
+    addi t1, t1, 1
+    sw t1, 0(t0)
+    # Execution should continue here
+    .global recovery_pt_mret_ptr
+    recovery_pt_mret_ptr: add x0, x0, x0
+  )":::);
+
+  __asm__ volatile ( R"(
+    lui t0, 0x40000
+    csrrc zero, mcause, t0
+  )" ::: "t0");
+
+  cvprintf(V_LOW, "Entered recovery point, due to unrecoverable mret ptr trap, mepc: %08x, expected: %08x\n", *g_mepc_triggered, (uint32_t)(&mtvt_table_mret + 3));
+  test_fail += test_fail_asm || *g_mepc_triggered != (uint32_t)(&mtvt_table_mret + 3);
+
+  if (test_fail) {
+    cvprintf(V_LOW, "\nTest: \"%s\" FAIL!\n", name);
+    return index + 1;
+  }
+  cvprintf(V_MEDIUM, "\nTest: \"%s\" OK!\n", name);
+  return 0;
+}
+
+// -----------------------------------------------------------------------------
 
 uint32_t r_mnxti_without_irq(uint32_t index, uint8_t report_name) {
   volatile uint8_t test_fail = 0;
@@ -1701,6 +1966,85 @@ uint32_t rw_mnxti_without_irq_illegal(uint32_t index, uint8_t report_name) {
     .option push
     .option norvc
     csrrwi %[rd], 0x345, 0x0
+    nop
+    .option pop
+  )":[rd] "=r"(mnxti_rval)
+    ::
+  );
+
+  test_fail += (uint8_t)((*g_expect_illegal ? 1 : 0));
+
+  // CSRRS with rs1 != x0 - illegal
+  *g_expect_illegal = 31;
+  __asm__ volatile ( R"(
+    .option push
+    .option norvc
+    csrrs %[rd], 0x345, x1
+    csrrs %[rd], 0x345, x2
+    csrrs %[rd], 0x345, x3
+    csrrs %[rd], 0x345, x4
+    csrrs %[rd], 0x345, x5
+    csrrs %[rd], 0x345, x6
+    csrrs %[rd], 0x345, x7
+    csrrs %[rd], 0x345, x8
+    csrrs %[rd], 0x345, x9
+    csrrs %[rd], 0x345, x10
+    csrrs %[rd], 0x345, x11
+    csrrs %[rd], 0x345, x12
+    csrrs %[rd], 0x345, x13
+    csrrs %[rd], 0x345, x14
+    csrrs %[rd], 0x345, x15
+    csrrs %[rd], 0x345, x16
+    csrrs %[rd], 0x345, x17
+    csrrs %[rd], 0x345, x18
+    csrrs %[rd], 0x345, x19
+    csrrs %[rd], 0x345, x20
+    csrrs %[rd], 0x345, x21
+    csrrs %[rd], 0x345, x22
+    csrrs %[rd], 0x345, x23
+    csrrs %[rd], 0x345, x24
+    csrrs %[rd], 0x345, x25
+    csrrs %[rd], 0x345, x26
+    csrrs %[rd], 0x345, x27
+    csrrs %[rd], 0x345, x28
+    csrrs %[rd], 0x345, x29
+    csrrs %[rd], 0x345, x30
+    csrrs %[rd], 0x345, x31
+    nop
+    .option pop
+  )":[rd] "=r"(mnxti_rval)
+    ::
+  );
+
+  test_fail += (uint8_t)((*g_expect_illegal ? 1 : 0));
+
+  // CSRRSI with imm[0, 2, 4] = 1 - illegal
+  *g_expect_illegal = 11;
+  __asm__ volatile ( R"(
+    .option push
+    .option norvc
+    # bit 0, 2, 4
+    csrrsi %[rd], 0x345, 1 << 0 | 1 << 2 | 1 << 4
+    # bit 0
+    csrrsi %[rd], 0x345, 1 << 0
+    # bit 2
+    csrrsi %[rd], 0x345, 1 << 2
+    # bit 4
+    csrrsi %[rd], 0x345, 1 << 4
+    # all bits
+    csrrsi %[rd], 0x345, 0x1f
+    # all bits without bit 0 and 2
+    csrrsi %[rd], 0x345, 0x1f & ~(1 << 0) & ~(1 << 2)
+    # all bits without bit 2 and 4
+    csrrsi %[rd], 0x345, 0x1f & ~(1 << 2) & ~(1 << 4)
+    # all bits without bit 0 and 4
+    csrrsi %[rd], 0x345, 0x1f & ~(1 << 0) & ~(1 << 4)
+    # all bits without 0
+    csrrsi %[rd], 0x345, 0x1f & ~(1 << 0)
+    # all bits without 2
+    csrrsi %[rd], 0x345, 0x1f & ~(1 << 2)
+    # all bits without 4
+    csrrsi %[rd], 0x345, 0x1f & ~(1 << 4)
     nop
     .option pop
   )":[rd] "=r"(mnxti_rval)
@@ -2250,6 +2594,7 @@ uint32_t rw_mscratchcsw_illegal(uint32_t index, uint8_t report_name) {
   __asm__ volatile (R"( csrrc zero, mstatus, %[rs1])"
     :: [rs1] "r"(mstatus_rval.raw):);
 
+  *g_expect_illegal = 1;
   __asm__ volatile (R"( csrrs  %[rd], 0x348, sp)"
       : [rd] "=r"(reg_backup_1) ::);
   test_fail += (uint8_t)((*g_expect_illegal ? 1 : 0));
@@ -2713,6 +3058,7 @@ uint32_t mret_with_minhv(uint32_t index, uint8_t report_name) {
     mret
     addi %[check_val], zero, 42
     jal zero, 2f
+    .align 4
     1: .word(2f)
     .space 0x100, 0x0
     2: addi %[result], %[check_val], 0
@@ -2720,6 +3066,13 @@ uint32_t mret_with_minhv(uint32_t index, uint8_t report_name) {
      [result] "=r"(result)
     :[mcause] "r"(mcause.raw)
     :"t0");
+
+  // Clear minhv-bit
+  mcause.clic.minhv = 0;
+
+  __asm__ volatile (R"(
+    csrrw zero, mcause, %[mcause]
+  )"::[mcause] "r"(mcause.raw));
 
   test_fail += (result != 0);
 
@@ -2748,6 +3101,7 @@ void reset_cpu_interrupt_lvl(void) {
   mcause.clic.mpil = 0;
   mcause.clic.mpie = mstatus.fields.mie;
   mcause.clic.mpp = 0x3;
+  mcause.clic.minhv = 0;
 
   __asm__ volatile ( R"(
     la %[pc], continued
@@ -2979,6 +3333,73 @@ uint32_t mintthresh_equal(uint32_t index, uint8_t report_name) {
   return 0;
 }
 
+
+uint32_t mret_with_minhv_and_unaligned_mepc(uint32_t index, uint8_t report_name) {
+  volatile uint8_t test_fail  = 0;
+  volatile mcause_t mcause    = { 0 };
+  volatile uint32_t result    = 0;
+  volatile uint32_t all_set   = 0xFFFFFFFF;
+
+  SET_FUNC_INFO
+  if (report_name) {
+    cvprintf(V_LOW, "\"%s\"", name);
+    return 0;
+  }
+
+  *g_special_handler_idx = 7;
+
+  __asm__ volatile ( R"(
+    csrrs %[rd1], mcause, zero
+  )":[rd1] "=r"(mcause.raw)
+    ::);
+
+  mcause.clic.minhv = 1;
+  mcause.clic.mpp = 0x3;
+  mcause.clic.mpie = 0;
+
+  *g_checker = 0;
+
+  __asm__ volatile (R"(
+    csrrw zero, mcause, %[mcause]
+    la t0, 1f
+    lw t1, (t0)
+    csrrw zero, mepc, t0
+    # Store instruction mepc aims to execute in mscratch register.
+    csrrw zero, mscratch, t1
+    mret
+
+    # Write 0xFFFF_FFFF to where g_checker points.
+    lw t2, g_checker
+    sw %[all_set], 0(t2)
+
+    jal zero, 2f
+    .align 4
+    .byte(0xFF)
+    .byte(0xFF)
+    1: .word(2f)
+    .space 0x100, 0x0
+
+    2:
+    # Fetch the value g_checker points to.
+    lw t2, g_checker
+    lw t2, 0(t2)
+
+    addi %[result], t2, 0
+
+  )":[result] "=r"(result)
+    :[mcause] "r"(mcause.raw), [all_set] "r"(all_set)
+    :"t0", "t1", "t2");
+
+  test_fail += (result != 0);
+
+  if (test_fail) {
+    cvprintf(V_LOW, "\nTest: \"%s\" FAIL!\n", name);
+    return index + 1;
+  }
+  cvprintf(V_MEDIUM, "\nTest: \"%s\" OK!\n", name);
+  return 0;
+}
+
 // -----------------------------------------------------------------------------
 // Note that the following interrupt/exception handler is not generic and specific
 // to this test.
@@ -3061,12 +3482,22 @@ __attribute__((interrupt("machine"))) void u_sw_irq_handler(void) {
     case 6:
       *g_irq_handler_reported_error = 1;
       vp_assert_irq(0, 0);
+      *g_special_handler_idx = 0;
+      return;
+      break;
+    case 7:
+      *g_special_handler_idx = 0;
+      //Write mscratch value to mepc
+      __asm__ volatile ( R"(
+        csrrw t0, mscratch, zero
+        csrrw zero, mepc, t0
+      )"::: "t0");
       return;
       break;
   }
 
   if (mcause.clic.interrupt == 0 && mcause.clic.exccode == 2) {
-    *g_expect_illegal = 0;
+    (*g_expect_illegal)--;
     increment_mepc(0);
     return;
   }
@@ -3074,7 +3505,7 @@ __attribute__((interrupt("machine"))) void u_sw_irq_handler(void) {
   switch (mcause.clic.interrupt) {
     case 0:
       switch (mcause.clic.exccode) {
-        case 0x1: cvprintf(V_LOW, "Instruction access fault at 0x%08lx\n", mepc);
+        case 0x1: cvprintf(V_LOW, "Instruction access fault at 0x%08lx minhv: %0d\n", mepc, mcause.clic.minhv);
                   break;
         case 0x2: cvprintf(V_LOW, "Invalid instruction fault at 0x%08lx\n", mepc);
                   break;
@@ -3089,9 +3520,7 @@ __attribute__((interrupt("machine"))) void u_sw_irq_handler(void) {
   // check if address is locked, then unlock
   // let test be responsible for cleaning up addr-regs to
   // not clutter code here
-  if ( /*mcause.clic.interrupt &&*/ mcause.clic.exccode == 1 && mcause.clic.minhv ) {
-    *g_recovery_enable = 1;
-    vp_assert_irq(0, 0);
+  if ( mcause.clic.exccode == 1 ) {
     cvprintf(V_LOW, "Encountered read access fault, trying to enable pmp access\n");
     __asm__ volatile ( R"(
       csrrw x0, pmpcfg0,  %[access_ena]
@@ -3110,16 +3539,10 @@ __attribute__((interrupt("machine"))) void u_sw_irq_handler(void) {
       csrrw x0, pmpcfg13, %[access_ena]
       csrrw x0, pmpcfg14, %[access_ena]
       csrrw x0, pmpcfg15, %[access_ena]
-
-      csrrs t0, mepc, x0
-      lw t0, 0(t0)
-      lui t1, 0x40000
-      csrrc x0, mcause, t1
-      csrrw x0, mepc, t0
     )"
     :
     : [access_ena] "r" (pmp_enable_access_all)
-    : "t0", "t1"
+    :
       );
   }
 
